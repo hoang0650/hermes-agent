@@ -1,13 +1,20 @@
 # Dokploy-friendly compose for AI Markets Hermes dashboard.
-# Prefer pulling the published image — do NOT build the monorepo Dockerfile
-# on the VPS (SQLite + Playwright + web builds often OOM / timeout).
 #
-# Dokploy → Application → General:
+# Root cause of the "Input is not a terminal (fd=0) / Shutting down" crash:
+# empty/default CMD runs interactive `hermes` chat. Non-TTY stdin exits →
+# s6 tears down dashboard too.
+#
+# Fix: CMD must be `dashboard …` (or `sleep infinity` + HERMES_DASHBOARD=1).
+#
+# Dokploy → Application:
 #   Provider: Docker Compose
 #   Compose path: deploy/docker-compose.dokploy.yml
+#   OR Nixpacks/Dockerfile with Command override:
+#     dashboard --host 0.0.0.0 --port 9119 --no-open
 #
-# Domains (optional if using Traefik File System wildcard):
-#   hermes.aimarkets.vn → container port 9119
+# Environment (required):
+#   HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
+#   HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<strong>
 
 services:
   hermes-dashboard:
@@ -21,12 +28,13 @@ services:
       HERMES_HOME: /opt/data
       HERMES_UID: "10000"
       HERMES_GID: "10000"
-      # Required when binding 0.0.0.0 — dashboard refuses to start without auth.
+      # Required for --host 0.0.0.0 (auth gate fail-closed without these).
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:?set HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
-      # Optional model keys (OpenRouter / Featherless) — same as denglish-api:
+      # Optional model keys:
       # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+    # Main process = dashboard (not interactive chat). Keeps container alive.
     command:
       [
         "dashboard",
@@ -36,6 +44,18 @@ services:
         "9119",
         "--no-open",
       ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9119/api/status', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
 volumes:
   hermes-data:
