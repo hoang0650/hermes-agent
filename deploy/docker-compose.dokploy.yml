@@ -1,0 +1,41 @@
+# Dokploy-friendly compose for AI Markets Hermes dashboard.
+# Prefer pulling the published image — do NOT build the monorepo Dockerfile
+# on the VPS (SQLite + Playwright + web builds often OOM / timeout).
+#
+# Dokploy → Application → General:
+#   Provider: Docker Compose
+#   Compose path: deploy/docker-compose.dokploy.yml
+#
+# Domains (optional if using Traefik File System wildcard):
+#   hermes.aimarkets.vn → container port 9119
+
+services:
+  hermes-dashboard:
+    image: nousresearch/hermes-agent:latest
+    restart: unless-stopped
+    ports:
+      - "9119:9119"
+    volumes:
+      - hermes-data:/opt/data
+    environment:
+      HERMES_HOME: /opt/data
+      HERMES_UID: "10000"
+      HERMES_GID: "10000"
+      # Required when binding 0.0.0.0 — dashboard refuses to start without auth.
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:?set HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      # Optional model keys (OpenRouter / Featherless) — same as denglish-api:
+      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+    command:
+      [
+        "dashboard",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9119",
+        "--no-open",
+      ]
+
+volumes:
+  hermes-data:
