@@ -519,6 +519,12 @@ def render_login_html(
 
     ``username`` / ``password`` — optional Launch deep-link credentials
     pre-filled into password forms (AI Markets auto-login).
+
+    ``prefer_provider`` — when set (Launch sends ``provider=aimarkets``),
+    only that password form is shown so buyers never see a second
+    admin/basic form. When unset but an ``aimarkets`` provider is
+    registered, only Aimarkets is shown; admin basic remains available
+    via ``?provider=basic``.
     """
     providers = list_session_providers()
     if not providers:
@@ -534,35 +540,44 @@ def render_login_html(
     else:
         next_qs = ""
 
-    buttons = []
-    needs_password_script = False
     password_providers = [
         p for p in providers if getattr(p, "supports_password", False)
     ]
-    for p in providers:
-        if getattr(p, "supports_password", False):
-            needs_password_script = True
-            # Prefill all password forms when only one exists; otherwise
-            # only the preferred provider (or all if prefer unset).
-            fill = bool(username or password) and (
-                len(password_providers) == 1
-                or not prefer_provider
-                or p.name == prefer_provider
+    prefer = (prefer_provider or "").strip().lower()
+    if prefer:
+        preferred = [p for p in password_providers if p.name.lower() == prefer]
+        if preferred:
+            password_providers = preferred
+    elif any(p.name == "aimarkets" for p in password_providers):
+        # Aimarkets multi-buyer host: one buyer form. Operators use ?provider=basic.
+        password_providers = [p for p in password_providers if p.name == "aimarkets"]
+
+    oauth_providers = [
+        p for p in providers if not getattr(p, "supports_password", False)
+    ]
+
+    buttons = []
+    needs_password_script = bool(password_providers)
+    single_password = len(password_providers) == 1
+    for p in password_providers:
+        fill = bool(username or password) and (
+            single_password or not prefer or p.name.lower() == prefer
+        )
+        buttons.append(
+            _render_password_form(
+                p,
+                next_path,
+                username=username if fill else "",
+                password=password if fill else "",
+                single=single_password,
             )
-            buttons.append(
-                _render_password_form(
-                    p,
-                    next_path,
-                    username=username if fill else "",
-                    password=password if fill else "",
-                )
-            )
-        else:
-            buttons.append(
-                f'      <a class="provider-btn" '
-                f'href="/auth/login?provider={html.escape(p.name, quote=True)}{next_qs}">'
-                f'Sign in with {html.escape(p.display_name)}</a>'
-            )
+        )
+    for p in oauth_providers:
+        buttons.append(
+            f'      <a class="provider-btn" '
+            f'href="/auth/login?provider={html.escape(p.name, quote=True)}{next_qs}">'
+            f'Sign in with {html.escape(p.display_name)}</a>'
+        )
     script = _PASSWORD_FORM_SCRIPT if needs_password_script else ""
     return _LOGIN_HTML_TEMPLATE.format(
         provider_buttons="\n".join(buttons),
@@ -576,6 +591,7 @@ def _render_password_form(
     *,
     username: str = "",
     password: str = "",
+    single: bool = False,
 ) -> str:
     """Render a username/password form for a ``supports_password`` provider.
 
@@ -586,9 +602,13 @@ def _render_password_form(
     defence in depth. The provider ``name`` is emitted in a ``data-``
     attribute (not a hidden input) so the script reads it without trusting
     form-field ordering.
+
+    When ``single`` is True (only one password provider on the page), the
+    title is plain ``Sign in`` so buyers do not see competing method labels.
     """
     pname = html.escape(provider.name, quote=True)
     plabel = html.escape(provider.display_name)
+    title = "Sign in" if single else f"Sign in with {plabel}"
     safe_next = html.escape(next_path, quote=True) if next_path else ""
     safe_user = html.escape(username, quote=True) if username else ""
     safe_pass = html.escape(password, quote=True) if password else ""
@@ -597,7 +617,7 @@ def _render_password_form(
     return (
         f'      <form class="provider-form" data-provider="{pname}" '
         f'autocomplete="on">\n'
-        f'        <div class="form-title">Sign in with {plabel}</div>\n'
+        f'        <div class="form-title">{title}</div>\n'
         f'        <input type="hidden" name="next" value="{safe_next}">\n'
         f'        <label class="field">\n'
         f'          <span class="field-label">Username</span>\n'
