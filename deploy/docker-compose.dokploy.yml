@@ -29,8 +29,12 @@ services:
       HERMES_UID: "10000"
       HERMES_GID: "10000"
       # Required for --host 0.0.0.0 (auth gate fail-closed without these).
+      # Admin/operator only — buyers use aimarkets provider below.
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:?set HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      # Per-buyer Launch autofill + profile lock (market-{userId}).
+      HERMES_AIMARKETS_API_URL: ${HERMES_AIMARKETS_API_URL:-https://api.aimarkets.vn}
+      AIMARKETS_SERVICE_SECRET: ${AIMARKETS_SERVICE_SECRET:?set AIMARKETS_SERVICE_SECRET}
       # Optional model keys:
       # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       # FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}

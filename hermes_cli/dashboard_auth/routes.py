@@ -156,8 +156,27 @@ async def login_page(request: Request) -> HTMLResponse:
     next_path = _validate_post_login_target(
         request.query_params.get("next", "")
     )
+    username = (request.query_params.get("username") or "").strip()
+    password = request.query_params.get("password") or ""
+    prefer_provider = (
+        request.query_params.get("provider")
+        or request.query_params.get("Provider")
+        or ""
+    ).strip()
+    auto_raw = (
+        request.query_params.get("autoLogin")
+        or request.query_params.get("autologin")
+        or ""
+    ).strip().lower()
+    auto_login = auto_raw in {"1", "true", "yes"}
     return HTMLResponse(
-        render_login_html(next_path=next_path),
+        render_login_html(
+            next_path=next_path,
+            username=username,
+            password=password,
+            prefer_provider=prefer_provider,
+            auto_login=auto_login,
+        ),
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 

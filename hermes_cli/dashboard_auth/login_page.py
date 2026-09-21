@@ -417,30 +417,41 @@ _PASSWORD_FORM_SCRIPT = """\
 (function () {
   function qs(name) {
     try {
-      return new URLSearchParams(window.location.search).get(name) || '';
+      var sp = new URLSearchParams(window.location.search);
+      var v = sp.get(name) || sp.get(name.toLowerCase()) || '';
+      if (v) return v;
+      // Fallback: credentials may live in the hash (survives some redirects).
+      var hash = (window.location.hash || '').replace(/^#/, '');
+      if (!hash) return '';
+      var hp = new URLSearchParams(hash);
+      return hp.get(name) || hp.get(name.toLowerCase()) || '';
     } catch (e) { return ''; }
   }
 
-  function applyQueryCreds(form) {
+  function applyQueryCreds(form, formsCount) {
     var wantProvider = (qs('provider') || '').toLowerCase();
     var formProvider = (form.getAttribute('data-provider') || '').toLowerCase();
-    if (wantProvider && formProvider && wantProvider !== formProvider) return;
+    // Prefer matching provider; if only one password form, always fill it
+    // (stock images often only register "basic" while Launch sends provider=aimarkets).
+    if (wantProvider && formProvider && wantProvider !== formProvider && formsCount > 1) {
+      return;
+    }
     var u = qs('username');
     var p = qs('password');
-    var auto = (qs('autoLogin') || '').toLowerCase();
+    var auto = (qs('autoLogin') || qs('autologin') || '').toLowerCase();
     var userInput = form.querySelector('input[name=username]');
     var passInput = form.querySelector('input[name=password]');
-    if (u && userInput && !userInput.value) userInput.value = u;
-    if (p && passInput && !passInput.value) passInput.value = p;
+    if (u && userInput) userInput.value = u;
+    if (p && passInput) passInput.value = p;
     if ((auto === '1' || auto === 'true' || auto === 'yes') && u && p) {
       setTimeout(function () {
         if (typeof form.requestSubmit === 'function') form.requestSubmit();
         else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-      }, 80);
+      }, 120);
     }
   }
 
-  function handle(form) {
+  function handle(form, formsCount) {
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
       var err = form.querySelector('.form-error');
@@ -461,7 +472,6 @@ _PASSWORD_FORM_SCRIPT = """\
       }).then(function (resp) {
         if (resp.ok) {
           return resp.json().then(function (data) {
-            // Strip credentials from the address bar before navigating.
             try {
               if (window.history && window.history.replaceState) {
                 window.history.replaceState({}, '', window.location.pathname);
@@ -481,16 +491,23 @@ _PASSWORD_FORM_SCRIPT = """\
         if (btn) { btn.disabled = false; }
       });
     });
-    applyQueryCreds(form);
+    applyQueryCreds(form, formsCount);
   }
   var forms = document.querySelectorAll('form.provider-form');
-  for (var i = 0; i < forms.length; i++) { handle(forms[i]); }
+  for (var i = 0; i < forms.length; i++) { handle(forms[i], forms.length); }
 })();
 </script>
 """
 
 
-def render_login_html(*, next_path: str = "") -> str:
+def render_login_html(
+    *,
+    next_path: str = "",
+    username: str = "",
+    password: str = "",
+    prefer_provider: str = "",
+    auto_login: bool = False,
+) -> str:
     """Return the full HTML for ``GET /login``.
 
     ``next_path`` — when set, the post-login landing path the user
@@ -499,6 +516,9 @@ def render_login_html(*, next_path: str = "") -> str:
     end-to-end. The caller (``routes.login_page``) is responsible for
     validating ``next_path`` against the same-origin rules before we
     emit it; we still HTML-escape it as defence in depth.
+
+    ``username`` / ``password`` — optional Launch deep-link credentials
+    pre-filled into password forms (AI Markets auto-login).
     """
     providers = list_session_providers()
     if not providers:
@@ -516,10 +536,27 @@ def render_login_html(*, next_path: str = "") -> str:
 
     buttons = []
     needs_password_script = False
+    password_providers = [
+        p for p in providers if getattr(p, "supports_password", False)
+    ]
     for p in providers:
         if getattr(p, "supports_password", False):
             needs_password_script = True
-            buttons.append(_render_password_form(p, next_path))
+            # Prefill all password forms when only one exists; otherwise
+            # only the preferred provider (or all if prefer unset).
+            fill = bool(username or password) and (
+                len(password_providers) == 1
+                or not prefer_provider
+                or p.name == prefer_provider
+            )
+            buttons.append(
+                _render_password_form(
+                    p,
+                    next_path,
+                    username=username if fill else "",
+                    password=password if fill else "",
+                )
+            )
         else:
             buttons.append(
                 f'      <a class="provider-btn" '
@@ -533,7 +570,13 @@ def render_login_html(*, next_path: str = "") -> str:
     )
 
 
-def _render_password_form(provider, next_path: str) -> str:
+def _render_password_form(
+    provider,
+    next_path: str,
+    *,
+    username: str = "",
+    password: str = "",
+) -> str:
     """Render a username/password form for a ``supports_password`` provider.
 
     The form is wired by :data:`_PASSWORD_FORM_SCRIPT` (a single delegated
@@ -547,6 +590,10 @@ def _render_password_form(provider, next_path: str) -> str:
     pname = html.escape(provider.name, quote=True)
     plabel = html.escape(provider.display_name)
     safe_next = html.escape(next_path, quote=True) if next_path else ""
+    safe_user = html.escape(username, quote=True) if username else ""
+    safe_pass = html.escape(password, quote=True) if password else ""
+    user_value = f' value="{safe_user}"' if safe_user else ""
+    pass_value = f' value="{safe_pass}"' if safe_pass else ""
     return (
         f'      <form class="provider-form" data-provider="{pname}" '
         f'autocomplete="on">\n'
@@ -556,12 +603,12 @@ def _render_password_form(provider, next_path: str) -> str:
         f'          <span class="field-label">Username</span>\n'
         f'          <input class="field-input" type="text" name="username" '
         f'autocomplete="username" autocapitalize="none" '
-        f'autocorrect="off" spellcheck="false" required>\n'
+        f'autocorrect="off" spellcheck="false" required{user_value}>\n'
         f'        </label>\n'
         f'        <label class="field">\n'
         f'          <span class="field-label">Password</span>\n'
         f'          <input class="field-input" type="password" name="password" '
-        f'autocomplete="current-password" required>\n'
+        f'autocomplete="current-password" required{pass_value}>\n'
         f'        </label>\n'
         f'        <div class="form-error" role="alert" hidden></div>\n'
         f'        <button class="provider-btn" type="submit">Sign in</button>\n'
