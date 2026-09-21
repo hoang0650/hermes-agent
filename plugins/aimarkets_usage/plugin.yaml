@@ -1,0 +1,11 @@
+name: aimarkets_usage
+version: 1.0.0
+description: "Charge AI Markets wallet for Hermes LLM usage (provider COGS + 25% markup). Calls POST /v1/hermes/usage with X-Service-Secret. Buyer id from profile market-{userId}."
+author: PHGroup
+kind: backend
+requires_env:
+  - HERMES_AIMARKETS_API_URL
+  - AIMARKETS_SERVICE_SECRET
+hooks:
+  - pre_llm_call
+  - post_api_request

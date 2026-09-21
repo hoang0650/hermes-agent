@@ -4,17 +4,22 @@
 # empty/default CMD runs interactive `hermes` chat. Non-TTY stdin exits →
 # s6 tears down dashboard too.
 #
-# Fix: CMD must be `dashboard …` (or `sleep infinity` + HERMES_DASHBOARD=1).
+# Fix: keep PID 1 alive with sleep infinity; dashboard is an s6 service
+# gated by HERMES_DASHBOARD=1 (empty CMD runs interactive hermes → exit → 502).
 #
 # Dokploy → Application:
 #   Provider: Docker Compose
 #   Compose path: deploy/docker-compose.dokploy.yml
 #   OR Nixpacks/Dockerfile with Command override:
-#     dashboard --host 0.0.0.0 --port 9119 --no-open
+#     sleep infinity
+#   AND env HERMES_DASHBOARD=1
 #
 # Environment (required):
+#   HERMES_DASHBOARD=1
 #   HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
 #   HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<strong>
+#   HERMES_AIMARKETS_API_URL=https://api.aimarkets.vn
+#   AIMARKETS_SERVICE_SECRET=<same as marketplace API>
 
 services:
   hermes-dashboard:
@@ -28,26 +33,28 @@ services:
       HERMES_HOME: /opt/data
       HERMES_UID: "10000"
       HERMES_GID: "10000"
-      # Required for --host 0.0.0.0 (auth gate fail-closed without these).
+      # s6 dashboard slot (required — without this, dashboard exits immediately).
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
       # Admin/operator only — buyers use aimarkets provider below.
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD:?set HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
       # Per-buyer Launch autofill + profile lock (market-{userId}).
       HERMES_AIMARKETS_API_URL: ${HERMES_AIMARKETS_API_URL:-https://api.aimarkets.vn}
       AIMARKETS_SERVICE_SECRET: ${AIMARKETS_SERVICE_SECRET:?set AIMARKETS_SERVICE_SECRET}
-      # Optional model keys:
-      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Wallet billing (plugins/aimarkets_usage → POST /v1/hermes/usage).
+      # HERMES_AIMARKETS_MARKUP: ${HERMES_AIMARKETS_MARKUP:-0.25}
+      # Inference providers (Dokploy → Environment). At least one is required
+      # for buyer chat. Keys are mirrored into each market-{userId} profile
+      # .env on login (OPENROUTER_* is profile-scoped, not process-global).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
-    # Main process = dashboard (not interactive chat). Keeps container alive.
-    command:
-      [
-        "dashboard",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "9119",
-        "--no-open",
-      ]
+    # Keep container alive. Dashboard is supervised by s6 when HERMES_DASHBOARD=1.
+    # Do NOT use interactive `hermes` / empty CMD — no TTY → exit → Traefik 502.
+    command: ["sleep", "infinity"]
     healthcheck:
       test:
         [

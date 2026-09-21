@@ -1,30 +1,46 @@
-# Dokploy → Traefik File System → folder dynamic → tạo file mới
-#   hermes-aimarkets-wildcard.yml
-# KHÔNG dán vào traefik.yml.
-#
-# DNS: hermes + *.hermes  A → 72.62.72.165
-# Hermes Command phải là: dashboard --host 0.0.0.0 --port 9119 --no-open
-# + HERMES_DASHBOARD_BASIC_AUTH_USERNAME / _PASSWORD
+# Dokploy → dynamic/hermes-aimarkets-wildcard.yml
+# DNS: hermes + *.hermes A → 72.62.72.165
+# TLS pattern = same as ai.aimarkets.vn (denglish): web+websecure, LE HTTP-01
 
 http:
   routers:
-    hermes-aimarkets-wildcard-https:
-      rule: "HostRegexp(`^[a-f0-9]{24}\\.hermes\\.aimarkets\\.vn$`)"
+    hermes-aimarkets-shared-http:
+      rule: "Host(`hermes.aimarkets.vn`)"
       entryPoints:
-        - websecure
+        - web
+      middlewares:
+        - redirect-to-https
       service: hermes-aimarkets-svc
-      tls:
-        certResolver: letsencrypt
-      priority: 50
+      priority: 200
 
     hermes-aimarkets-shared-https:
       rule: "Host(`hermes.aimarkets.vn`)"
       entryPoints:
         - websecure
       service: hermes-aimarkets-svc
+      priority: 200
       tls:
         certResolver: letsencrypt
-      priority: 200
+        domains:
+          - main: "hermes.aimarkets.vn"
+
+    hermes-aimarkets-tenant-http:
+      rule: "HostRegexp(`^[a-f0-9]{24}\\.hermes\\.aimarkets\\.vn$`)"
+      entryPoints:
+        - web
+      middlewares:
+        - redirect-to-https
+      service: hermes-aimarkets-svc
+      priority: 50
+
+    hermes-aimarkets-tenant-https:
+      rule: "HostRegexp(`^[a-f0-9]{24}\\.hermes\\.aimarkets\\.vn$`)"
+      entryPoints:
+        - websecure
+      service: hermes-aimarkets-svc
+      priority: 50
+      tls:
+        certResolver: letsencrypt
 
   services:
     hermes-aimarkets-svc:

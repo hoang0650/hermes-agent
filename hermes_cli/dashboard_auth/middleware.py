@@ -383,7 +383,9 @@ def _aimarkets_forbidden_profile(session, request: Request) -> Optional[Response
     if not locked.startswith("market-"):
         return None
     q = (request.query_params.get("profile") or "").strip()
-    if q and q not in ("", "current", locked):
+    # UI often lands on ?profile=default; aimarkets lock remaps HERMES_HOME
+    # to market-{userId} anyway, so treat default/current as allowed.
+    if q and q not in ("", "current", "default", locked):
         return JSONResponse(
             {"detail": "Profile access denied for this account."},
             status_code=403,
