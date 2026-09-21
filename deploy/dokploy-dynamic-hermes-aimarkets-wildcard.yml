@@ -1,52 +1,34 @@
-# Paste → Dokploy → Traefik File System → dynamic/hermes-aimarkets-wildcard.yml
+# Dokploy → Traefik File System → folder dynamic → tạo file mới
+#   hermes-aimarkets-wildcard.yml
+# KHÔNG dán vào traefik.yml.
 #
-# AI Markets Hermes dashboard (parallel to OpenClaw wildcard).
-#
-# DNS (Mắt Bão):
-#   hermes.aimarkets.vn     A  → 72.62.72.165
-#   *.hermes.aimarkets.vn   A  → 72.62.72.165   (host = *.hermes)
-#
-# Host: {userId}.hermes.aimarkets.vn  (userId = Mongo ObjectId 24 hex)
-# Upstream: Hermes web dashboard (default port 9119). Update service name/port if needed.
+# DNS: hermes + *.hermes  A → 72.62.72.165
+# Hermes Command phải là: dashboard --host 0.0.0.0 --port 9119 --no-open
+# + HERMES_DASHBOARD_BASIC_AUTH_USERNAME / _PASSWORD
 
 http:
   routers:
-    hermes-aimarkets-wildcard-http:
-      rule: "HostRegexp(`^[a-f0-9]{24}\\.hermes\\.aimarkets\\.vn$`)"
-      entryPoints:
-        - web
-      service: hermes-wildcard-svc
-      priority: 50
-
     hermes-aimarkets-wildcard-https:
       rule: "HostRegexp(`^[a-f0-9]{24}\\.hermes\\.aimarkets\\.vn$`)"
       entryPoints:
         - websecure
-      service: hermes-wildcard-svc
+      service: hermes-aimarkets-svc
       tls:
         certResolver: letsencrypt
       priority: 50
-
-    hermes-aimarkets-shared-http:
-      rule: "Host(`hermes.aimarkets.vn`)"
-      entryPoints:
-        - web
-      service: hermes-wildcard-svc
-      priority: 200
 
     hermes-aimarkets-shared-https:
       rule: "Host(`hermes.aimarkets.vn`)"
       entryPoints:
         - websecure
-      service: hermes-wildcard-svc
+      service: hermes-aimarkets-svc
       tls:
         certResolver: letsencrypt
-        domains:
-          - main: "hermes.aimarkets.vn"
       priority: 200
 
   services:
-    hermes-wildcard-svc:
+    hermes-aimarkets-svc:
       loadBalancer:
         servers:
-          - url: "http://hermes-dashboard:9119"
+          - url: "http://aimarketplace-hermes-nxdss5:9119"
+        passHostHeader: true

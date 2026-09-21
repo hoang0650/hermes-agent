@@ -38,13 +38,32 @@ Without basic-auth env, `dashboard --host 0.0.0.0` also exits immediately (auth 
 
 ### If you keep “Dockerfile” provider instead of Compose
 
-Dokploy → General → **Command**:
+Dokploy → **hermes** → Advanced → **Run Command** (screenshot hiện `/bin/sh` = sai, container không chạy dashboard):
 
-```text
-dashboard --host 0.0.0.0 --port 9119 --no-open
+| Field | Value |
+|-------|--------|
+| Command | `dashboard` |
+| Args (Add Argument ×4) | `--host` → `0.0.0.0` → `--port` → `9119` → `--no-open` |
+
+Không để Command = `/bin/sh` và không để trống Args.
+
+Environment:
+
+```env
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<strong-password>
 ```
 
-Same basic-auth env vars. Redeploy.
+Advanced → **Ports** → Add Port:
+
+| | |
+|--|--|
+| Published / container | `9119` |
+| Protocol | `tcp` (hoặc HTTPS domain trong Domains tab) |
+
+**Không** dựa vào Advanced → Traefik của app này cho `{userId}.hermes…` — dùng **Traefik File System** (sidebar) + file `hermes-aimarkets-wildcard.yml` (upstream `http://aimarketplace-hermes-nxdss5:9119`).
+
+Save → **Redeploy**.
 
 ### Alternate (s6-supervised dashboard)
 
@@ -68,7 +87,23 @@ Env: HERMES_DASHBOARD=1
 
 Paste `deploy/dokploy-dynamic-hermes-aimarkets-wildcard.yml` as `dynamic/hermes-aimarkets-wildcard.yml`.
 
-Point the service URL at the real Dokploy container name on port **9119**.
+File **must** include `services.hermes-aimarkets-svc` → `http://hermes-dashboard:9119` (or real container name on the Traefik Docker network). Missing `services:` → Traefik **404 page not found**.
+
+### 404 + “Không bảo mật”
+
+| Symptom | Cause | Fix |
+|---------|--------|-----|
+| Plain `404 page not found` | No router / no service / wrong Host | Re-paste yml with `services:`; confirm DNS `*.hermes` A → VPS |
+| Red “Không bảo mật” | No TLS for `{userId}.hermes…` | Wildcard needs **DNS-01** (`*.hermes.aimarkets.vn`). HTTP-01 only covers apex |
+| Connection refused / blank | Dashboard not running | Command `dashboard --host 0.0.0.0 --port 9119 --no-open` + basic-auth env |
+
+```bash
+# On VPS
+docker ps --format "{{.Names}}" | grep -i hermes
+curl -sI http://127.0.0.1:9119/api/status
+ls /etc/dokploy/traefik/dynamic/
+# Confirm hermes-aimarkets-wildcard.yml has both routers AND services
+```
 
 ## Conventions
 
