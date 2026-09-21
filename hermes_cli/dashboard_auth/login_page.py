@@ -415,6 +415,31 @@ an SSH tunnel or Tailscale.</p>
 _PASSWORD_FORM_SCRIPT = """\
 <script>
 (function () {
+  function qs(name) {
+    try {
+      return new URLSearchParams(window.location.search).get(name) || '';
+    } catch (e) { return ''; }
+  }
+
+  function applyQueryCreds(form) {
+    var wantProvider = (qs('provider') || '').toLowerCase();
+    var formProvider = (form.getAttribute('data-provider') || '').toLowerCase();
+    if (wantProvider && formProvider && wantProvider !== formProvider) return;
+    var u = qs('username');
+    var p = qs('password');
+    var auto = (qs('autoLogin') || '').toLowerCase();
+    var userInput = form.querySelector('input[name=username]');
+    var passInput = form.querySelector('input[name=password]');
+    if (u && userInput && !userInput.value) userInput.value = u;
+    if (p && passInput && !passInput.value) passInput.value = p;
+    if ((auto === '1' || auto === 'true' || auto === 'yes') && u && p) {
+      setTimeout(function () {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit();
+        else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+      }, 80);
+    }
+  }
+
   function handle(form) {
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
@@ -436,6 +461,12 @@ _PASSWORD_FORM_SCRIPT = """\
       }).then(function (resp) {
         if (resp.ok) {
           return resp.json().then(function (data) {
+            // Strip credentials from the address bar before navigating.
+            try {
+              if (window.history && window.history.replaceState) {
+                window.history.replaceState({}, '', window.location.pathname);
+              }
+            } catch (e) {}
             window.location.assign((data && data.next) || '/');
           });
         }
@@ -450,6 +481,7 @@ _PASSWORD_FORM_SCRIPT = """\
         if (btn) { btn.disabled = false; }
       });
     });
+    applyQueryCreds(form);
   }
   var forms = document.querySelectorAll('form.provider-form');
   for (var i = 0; i < forms.length; i++) { handle(forms[i]); }

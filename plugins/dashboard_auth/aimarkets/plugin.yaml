@@ -1,0 +1,8 @@
+name: aimarkets
+version: 1.0.0
+description: "AI Markets multi-buyer dashboard auth. Each marketplace buyer gets a unique username/password; session locks to Hermes profile market-{userId} so buyers cannot see each other's data. Verifies credentials via AIMARKETS_API_URL /v1/hermes/auth/verify. Keep HERMES_DASHBOARD_BASIC_AUTH_* for operator/admin only."
+author: PHGroup
+kind: backend
+requires_env:
+  - HERMES_AIMARKETS_API_URL
+  - AIMARKETS_SERVICE_SECRET

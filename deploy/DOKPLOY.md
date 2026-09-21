@@ -76,6 +76,26 @@ Env: HERMES_DASHBOARD=1
      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=…
 ```
 
+## Multi-buyer isolation (AI Markets)
+
+Shared `HERMES_DASHBOARD_BASIC_AUTH_*` is **operator-only**. Buyers get unique
+accounts (`HermesAccount` in marketplace API) via Launch.
+
+Hermes Dokploy env (in addition to dashboard Command):
+
+```env
+HERMES_AIMARKETS_API_URL=https://api.aimarkets.vn
+AIMARKETS_SERVICE_SECRET=<same as marketplace-api>
+HERMES_AIMARKETS_AUTH_SECRET=<32+ random bytes, base64>
+# Keep admin basic auth for operators — different password, never share with buyers:
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<ops-only>
+```
+
+Enable the `aimarkets` dashboard-auth plugin (bundled under
+`plugins/dashboard_auth/aimarkets`). On login, session locks to Hermes profile
+`market-{userId}` so buyer A cannot open buyer B’s chats/files.
+
 ## DNS (Mắt Bão)
 
 | Host | Type | Value |

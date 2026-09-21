@@ -17,7 +17,7 @@ binds.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -320,6 +320,98 @@ def _verify_bearer(request: Request, *, access_token: str):
     return None
 
 
+def _aimarkets_profile_lock(session, request: Optional[Request] = None) -> Optional[Any]:
+    """Context manager that forces HERMES_HOME to the buyer's locked profile.
+
+    Aimarkets sessions store the profile name in ``Session.org_id``
+    (``market-{userId}``). Without this lock, a buyer authenticated on a
+    shared dashboard process could switch ``?profile=`` and read other
+    buyers' chats/files.
+    """
+    from contextlib import nullcontext
+
+    if session is None or getattr(session, "provider", "") != "aimarkets":
+        return nullcontext()
+    profile = str(getattr(session, "org_id", "") or "").strip()
+    if not profile.startswith("market-"):
+        return nullcontext()
+
+    # Reject attempts to target a foreign profile via query/path.
+    if request is not None:
+        q = (request.query_params.get("profile") or "").strip()
+        if q and q not in ("current", "default", profile) and not q.startswith(
+            f"{profile}/"
+        ):
+            # Return a tiny context that raises on enter — callers should
+            # check via _aimarkets_profile_forbidden first.
+            pass
+
+    try:
+        from hermes_cli import profiles as profiles_mod
+        from hermes_constants import (
+            reset_hermes_home_override,
+            set_hermes_home_override,
+        )
+
+        canon = profiles_mod.normalize_profile_name(profile)
+        profiles_mod.validate_profile_name(canon)
+        if not profiles_mod.profile_exists(canon):
+            profiles_mod.create_profile(canon)
+        home = profiles_mod.get_profile_dir(canon)
+
+        class _Lock:
+            def __enter__(self):
+                self._token = set_hermes_home_override(str(home))
+                if request is not None:
+                    request.state.aimarkets_locked_profile = canon
+                return home
+
+            def __exit__(self, *exc):
+                reset_hermes_home_override(self._token)
+
+        return _Lock()
+    except Exception as exc:
+        _log.warning("aimarkets profile lock failed for %r: %s", profile, exc)
+        return nullcontext()
+
+
+def _aimarkets_forbidden_profile(session, request: Request) -> Optional[Response]:
+    """403 when an Aimarkets buyer asks for another profile."""
+    if session is None or getattr(session, "provider", "") != "aimarkets":
+        return None
+    locked = str(getattr(session, "org_id", "") or "").strip()
+    if not locked.startswith("market-"):
+        return None
+    q = (request.query_params.get("profile") or "").strip()
+    if q and q not in ("", "current", locked):
+        return JSONResponse(
+            {"detail": "Profile access denied for this account."},
+            status_code=403,
+        )
+    path = request.url.path or ""
+    # /api/profiles/{name} — block foreign names
+    prefix = "/api/profiles/"
+    if path.startswith(prefix):
+        rest = path[len(prefix) :].split("/", 1)[0]
+        if rest and rest not in ("sessions", "active", "current", locked):
+            # allow list/create endpoints without a name segment
+            if rest not in ("",):
+                # sessions is a literal route; named profile routes look like /api/profiles/foo
+                known_literals = {
+                    "sessions",
+                    "active",
+                    "export",
+                    "import",
+                    "create",
+                }
+                if rest not in known_literals and rest != locked:
+                    return JSONResponse(
+                        {"detail": "Profile access denied for this account."},
+                        status_code=403,
+                    )
+    return None
+
+
 async def gated_auth_middleware(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
@@ -366,7 +458,11 @@ async def gated_auth_middleware(
             )
         if bearer_session is not None:
             request.state.session = bearer_session
-            return await call_next(request)
+            forbidden = _aimarkets_forbidden_profile(bearer_session, request)
+            if forbidden is not None:
+                return forbidden
+            with _aimarkets_profile_lock(bearer_session, request):
+                return await call_next(request)
         # A bearer was presented but didn't verify (expired/invalid/unknown).
         # Return the structured 401 so the desktop knows to refresh or
         # re-login, rather than falling through to the cookie/login redirect.
@@ -470,7 +566,11 @@ async def gated_auth_middleware(
         if refreshed is not None:
             new_session, refreshing_provider = refreshed
             request.state.session = new_session
-            response = await call_next(request)
+            forbidden = _aimarkets_forbidden_profile(new_session, request)
+            if forbidden is not None:
+                return forbidden
+            with _aimarkets_profile_lock(new_session, request):
+                response = await call_next(request)
             # Persist the ROTATED tokens. Portal rotates the refresh token on
             # every refresh and runs reuse-detection, so writing the new RT
             # back is mandatory: a stale RT cookie would replay a rotated
@@ -517,7 +617,11 @@ async def gated_auth_middleware(
         return response
 
     request.state.session = session
-    response = await call_next(request)
+    forbidden = _aimarkets_forbidden_profile(session, request)
+    if forbidden is not None:
+        return forbidden
+    with _aimarkets_profile_lock(session, request):
+        response = await call_next(request)
     if not provider_hint and session.provider:
         from hermes_cli.dashboard_auth.cookies import detect_https
         from hermes_cli.dashboard_auth.prefix import prefix_from_request
