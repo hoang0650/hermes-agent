@@ -1,0 +1,9 @@
+name: ponytail
+version: 1.0.0
+description: "Ponytail coding ruleset (YAGNI, stdlib first, smallest correct change) for AI Markets buyers. Fetches the rules from the shared Ponytail service (PONYTAIL_URL) and injects them once per conversation via pre_llm_call."
+author: PHGroup (rules by Dietrich Gebert, Ponytail, MIT)
+kind: backend
+requires_env:
+  - PONYTAIL_URL
+hooks:
+  - pre_llm_call

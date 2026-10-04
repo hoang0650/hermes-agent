@@ -45,6 +45,9 @@ services:
       AIMARKETS_SERVICE_SECRET: ${AIMARKETS_SERVICE_SECRET:?set AIMARKETS_SERVICE_SECRET}
       # Wallet billing (plugins/aimarkets_usage → POST /v1/hermes/usage).
       # HERMES_AIMARKETS_MARKUP: ${HERMES_AIMARKETS_MARKUP:-0.25}
+      # Ponytail coding rules (plugins/ponytail; see ponytail/deploy/DOKPLOY.md).
+      PONYTAIL_URL: ${PONYTAIL_URL:-}
+      PONYTAIL_MODE: ${PONYTAIL_MODE:-compact}
       # Inference providers (Dokploy → Environment). At least one is required
       # for buyer chat. Keys are mirrored into each market-{userId} profile
       # .env on login (OPENROUTER_* is profile-scoped, not process-global).

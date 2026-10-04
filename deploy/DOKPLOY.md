@@ -100,6 +100,15 @@ The bundled ``aimarkets_usage`` backend plugin auto-loads when those env vars
 are set. Each LLM API call reports tokens; API creates a wallet ``debit`` with
 ``meta.channel=hermes``.
 
+Ponytail coding rules (shared service, see ponytail/deploy/DOKPLOY.md). The
+``ponytail`` backend plugin adds them once per conversation; on the stock image
+copy it in with ``deploy/_deploy-ponytail-plugin.sh``:
+
+```env
+PONYTAIL_URL=http://aimarketplace-ponytail:8787
+PONYTAIL_MODE=compact
+```
+
 ## Inference API keys (OpenRouter / OpenAI / …)
 
 Hermes reads provider keys from **profile** ``.env`` under ``HERMES_HOME``
