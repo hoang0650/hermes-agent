@@ -438,6 +438,19 @@ _PASSWORD_FORM_SCRIPT = """\
     }
     var u = qs('username');
     var p = qs('password');
+    // AI Markets Launch: single-use ticket in the URL fragment (never the query
+    // string, so it stays out of access logs / Referer). Submitted through the
+    // aimarkets provider as a reserved username; the API redeems it once.
+    var ticket = qs('ticket');
+    if (ticket) {
+      u = '__aimarkets_ticket__';
+      p = ticket;
+      try {
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState({}, '', window.location.pathname + window.location.search);
+        }
+      } catch (e) {}
+    }
     var auto = (qs('autoLogin') || qs('autologin') || '').toLowerCase();
     var userInput = form.querySelector('input[name=username]');
     var passInput = form.querySelector('input[name=password]');
