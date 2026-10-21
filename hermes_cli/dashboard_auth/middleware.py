@@ -320,6 +320,18 @@ def _verify_bearer(request: Request, *, access_token: str):
     return None
 
 
+class _AimarketsProfileLockError(Exception):
+    """An Aimarkets buyer session could not be pinned to its own profile."""
+
+
+class _AimarketsProfileDenied:
+    def __enter__(self):
+        raise _AimarketsProfileLockError("profile lock unavailable")
+
+    def __exit__(self, *_exc):
+        return False
+
+
 def _aimarkets_profile_lock(session, request: Optional[Request] = None) -> Optional[Any]:
     """Context manager that forces HERMES_HOME to the buyer's locked profile.
 
@@ -334,7 +346,8 @@ def _aimarkets_profile_lock(session, request: Optional[Request] = None) -> Optio
         return nullcontext()
     profile = str(getattr(session, "org_id", "") or "").strip()
     if not profile.startswith("market-"):
-        return nullcontext()
+        _log.warning("aimarkets profile lock refused session without market- profile")
+        return _AimarketsProfileDenied()
 
     # Reject attempts to target a foreign profile via query/path.
     if request is not None:
@@ -372,7 +385,7 @@ def _aimarkets_profile_lock(session, request: Optional[Request] = None) -> Optio
         return _Lock()
     except Exception as exc:
         _log.warning("aimarkets profile lock failed for %r: %s", profile, exc)
-        return nullcontext()
+        return _AimarketsProfileDenied()
 
 
 def _aimarkets_forbidden_profile(session, request: Request) -> Optional[Response]:
@@ -463,8 +476,14 @@ async def gated_auth_middleware(
             forbidden = _aimarkets_forbidden_profile(bearer_session, request)
             if forbidden is not None:
                 return forbidden
-            with _aimarkets_profile_lock(bearer_session, request):
-                return await call_next(request)
+            try:
+                with _aimarkets_profile_lock(bearer_session, request):
+                    return await call_next(request)
+            except _AimarketsProfileLockError:
+                return JSONResponse(
+                    {"detail": "Could not isolate this account's profile."},
+                    status_code=503,
+                )
         # A bearer was presented but didn't verify (expired/invalid/unknown).
         # Return the structured 401 so the desktop knows to refresh or
         # re-login, rather than falling through to the cookie/login redirect.
@@ -571,8 +590,14 @@ async def gated_auth_middleware(
             forbidden = _aimarkets_forbidden_profile(new_session, request)
             if forbidden is not None:
                 return forbidden
-            with _aimarkets_profile_lock(new_session, request):
-                response = await call_next(request)
+            try:
+                with _aimarkets_profile_lock(new_session, request):
+                    response = await call_next(request)
+            except _AimarketsProfileLockError:
+                return JSONResponse(
+                    {"detail": "Could not isolate this account's profile."},
+                    status_code=503,
+                )
             # Persist the ROTATED tokens. Portal rotates the refresh token on
             # every refresh and runs reuse-detection, so writing the new RT
             # back is mandatory: a stale RT cookie would replay a rotated
@@ -622,8 +647,14 @@ async def gated_auth_middleware(
     forbidden = _aimarkets_forbidden_profile(session, request)
     if forbidden is not None:
         return forbidden
-    with _aimarkets_profile_lock(session, request):
-        response = await call_next(request)
+    try:
+        with _aimarkets_profile_lock(session, request):
+            response = await call_next(request)
+    except _AimarketsProfileLockError:
+        return JSONResponse(
+            {"detail": "Could not isolate this account's profile."},
+            status_code=503,
+        )
     if not provider_hint and session.provider:
         from hermes_cli.dashboard_auth.cookies import detect_https
         from hermes_cli.dashboard_auth.prefix import prefix_from_request

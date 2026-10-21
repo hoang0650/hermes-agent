@@ -48,13 +48,10 @@ services:
       # Ponytail coding rules (plugins/ponytail; see ponytail/deploy/DOKPLOY.md).
       PONYTAIL_URL: ${PONYTAIL_URL:-}
       PONYTAIL_MODE: ${PONYTAIL_MODE:-compact}
-      # Inference providers (Dokploy → Environment). At least one is required
-      # for buyer chat. Keys are mirrored into each market-{userId} profile
-      # .env on login (OPENROUTER_* is profile-scoped, not process-global).
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # FEATHERLESS_API_KEY: ${FEATHERLESS_API_KEY:-}
+      # Do not put platform inference keys here. Buyer profiles are readable by
+      # that buyer, and login no longer copies container keys into them.
+      # Each buyer chooses their own key on aimarkets.vn (Hermes → AI provider).
+      # OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     # Keep container alive. Dashboard is supervised by s6 when HERMES_DASHBOARD=1.
     # Do NOT use interactive `hermes` / empty CMD — no TTY → exit → Traefik 502.
     command: ["sleep", "infinity"]

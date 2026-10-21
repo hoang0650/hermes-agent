@@ -22,6 +22,7 @@ import logging
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
@@ -160,12 +161,12 @@ class AimarketsAuthProvider(DashboardAuthProvider):
                 profiles_mod.create_profile(canon, no_skills=False)
                 created = True
                 logger.info("dashboard-auth-aimarkets: created profile %s", canon)
-            # Fresh profiles get a comment-only .env — without mirrored
-            # inference keys the TUI fails with "No inference provider".
-            AimarketsAuthProvider._mirror_inference_credentials(canon)
+            # Platform keys stay out of this profile. Only the buyer's BYOK
+            # selection is written, and previously copied platform keys are removed.
+            AimarketsAuthProvider._apply_buyer_credentials(canon)
             if created:
                 logger.info(
-                    "dashboard-auth-aimarkets: mirrored inference creds into %s",
+                    "dashboard-auth-aimarkets: prepared profile %s",
                     canon,
                 )
         except Exception as exc:
@@ -175,142 +176,135 @@ class AimarketsAuthProvider(DashboardAuthProvider):
                 exc,
             )
 
-    @staticmethod
-    def _mirror_inference_credentials(profile: str) -> None:
-        """Copy shared Dokploy/root API keys into the buyer's profile ``.env``.
+    _PLATFORM_KEY_NAMES = (
+        "OPENROUTER_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "ANTHROPIC_API_KEY",
+        "FEATHERLESS_API_KEY",
+        "GOOGLE_API_KEY",
+        "GEMINI_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GROQ_API_KEY",
+        "TOGETHER_API_KEY",
+        "FIREWORKS_API_KEY",
+        "MISTRAL_API_KEY",
+        "COHERE_API_KEY",
+        "XAI_API_KEY",
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_ENDPOINT",
+    )
+    _BUYER_ENV = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "google": "GEMINI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "xai": "XAI_API_KEY",
+        "byok-custom": "OPENAI_API_KEY",
+    }
 
-        Hermes treats ``OPENROUTER_API_KEY`` / ``OPENAI_API_KEY`` as
-        profile-scoped secrets (not process-global). Aimarkets buyers run
-        under ``HERMES_HOME=…/profiles/market-{userId}``, so container env
-        alone is invisible to agent init unless the keys also land in that
-        profile's ``.env``.
-        """
+    @staticmethod
+    def _read_env_file(path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        if not path.is_file():
+            return out
+        try:
+            raw = path.read_text(encoding="utf-8-sig", errors="replace")
+        except Exception:
+            return out
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[7:]
+            k, _, v = line.partition("=")
+            k = k.strip()
+            v = v.strip().strip("'").strip('"')
+            if k and v:
+                out[k] = v
+        return out
+
+    @staticmethod
+    def _fetch_buyer_connection(user_id: str) -> Optional[dict[str, Any]]:
+        """The buyer's own provider key. Never a platform key."""
+        api = (os.environ.get("HERMES_AIMARKETS_API_URL") or "").rstrip("/")
+        secret = (os.environ.get("AIMARKETS_SERVICE_SECRET") or "").strip()
+        if not api or not secret or not user_id:
+            return None
+        url = f"{api}/v1/hermes/provider/resolve?user_id={urllib.parse.quote(user_id)}"
+        req = urllib.request.Request(
+            url,
+            headers={"Accept": "application/json", "X-Service-Secret": secret},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode() or "{}")
+        except Exception as exc:
+            logger.warning("dashboard-auth-aimarkets: byok resolve failed: %s", exc)
+            return None
+        conn = data.get("connection") if isinstance(data, dict) else None
+        return conn if isinstance(conn, dict) else None
+
+    @staticmethod
+    def _apply_buyer_credentials(profile: str) -> None:
+        """Drop platform keys copied into this profile and write the buyer's BYOK key."""
         from pathlib import Path
 
         from hermes_cli import profiles as profiles_mod
-        from hermes_cli.config import save_env_value
-        from hermes_constants import get_hermes_home
-
-        # Inference keys operators typically set in Dokploy → Environment.
-        key_names = (
-            "OPENROUTER_API_KEY",
-            "OPENAI_API_KEY",
-            "OPENAI_BASE_URL",
-            "ANTHROPIC_API_KEY",
-            "FEATHERLESS_API_KEY",
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-            "DEEPSEEK_API_KEY",
-            "GROQ_API_KEY",
-            "TOGETHER_API_KEY",
-            "FIREWORKS_API_KEY",
-            "MISTRAL_API_KEY",
-            "COHERE_API_KEY",
-            "XAI_API_KEY",
-            "AZURE_OPENAI_API_KEY",
-            "AZURE_OPENAI_ENDPOINT",
-        )
+        from hermes_cli.config import load_config, remove_env_value, save_config, save_env_value
+        from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 
         root_home = Path(os.environ.get("HERMES_HOME") or str(get_hermes_home()))
-        # Prefer the real install root even if a request already overrode home.
-        root_env_path = root_home / ".env"
-        root_vars: dict[str, str] = {}
-        if root_env_path.is_file():
-            try:
-                # Temporarily read root .env without relying on active override.
-                raw = root_env_path.read_text(encoding="utf-8-sig", errors="replace")
-                for line in raw.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    if line.startswith("export "):
-                        line = line[7:]
-                    k, _, v = line.partition("=")
-                    k = k.strip()
-                    v = v.strip().strip("'").strip('"')
-                    if k and v:
-                        root_vars[k] = v
-            except Exception as exc:
-                logger.debug("aimarkets: root .env read failed: %s", exc)
+        root_vars = AimarketsAuthProvider._read_env_file(root_home / ".env")
+        user_id = profile[len("market-") :] if profile.startswith("market-") else ""
+        connection = AimarketsAuthProvider._fetch_buyer_connection(user_id)
 
         profile_dir = profiles_mod.get_profile_dir(profile)
-        profile_env = profile_dir / ".env"
-
-        # Existing profile values win; fill gaps from root .env then os.environ.
-        existing: dict[str, str] = {}
-        if profile_env.is_file():
-            try:
-                raw = profile_env.read_text(encoding="utf-8-sig", errors="replace")
-                for line in raw.splitlines():
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    if line.startswith("export "):
-                        line = line[7:]
-                    k, _, v = line.partition("=")
-                    k = k.strip()
-                    v = v.strip().strip("'").strip('"')
-                    if k and v:
-                        existing[k] = v
-            except Exception:
-                pass
-
-        # Write under the profile home via save_env_value (respects override).
-        from hermes_constants import (
-            reset_hermes_home_override,
-            set_hermes_home_override,
-        )
-
+        existing = AimarketsAuthProvider._read_env_file(profile_dir / ".env")
         token = set_hermes_home_override(str(profile_dir))
         try:
-            wrote = 0
-            for name in key_names:
-                if existing.get(name):
-                    continue
-                val = (root_vars.get(name) or os.environ.get(name) or "").strip()
-                if not val:
-                    continue
-                save_env_value(name, val)
-                wrote += 1
-            if wrote:
+            removed = 0
+            for name in AimarketsAuthProvider._PLATFORM_KEY_NAMES:
+                platform_val = (root_vars.get(name) or os.environ.get(name) or "").strip()
+                if platform_val and existing.get(name) == platform_val:
+                    if remove_env_value(name):
+                        removed += 1
+            if removed:
                 logger.info(
-                    "dashboard-auth-aimarkets: wrote %d inference env keys into %s",
-                    wrote,
+                    "dashboard-auth-aimarkets: removed %d platform keys from %s",
+                    removed,
                     profile,
                 )
-
-            # Ensure model.provider so resolve_provider doesn't stay empty.
-            try:
-                from hermes_cli.config import load_config, save_config
-
-                cfg = load_config() or {}
-                model = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
-                if not (isinstance(model, dict) and str(model.get("provider") or "").strip()):
-                    provider = "openrouter"
-                    if (root_vars.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")) and not (
-                        root_vars.get("OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
-                    ):
-                        provider = "openrouter"  # Hermes maps OPENAI_API_KEY → openrouter-compatible
-                    if root_vars.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY"):
-                        if not (
-                            root_vars.get("OPENROUTER_API_KEY")
-                            or os.environ.get("OPENROUTER_API_KEY")
-                            or root_vars.get("OPENAI_API_KEY")
-                            or os.environ.get("OPENAI_API_KEY")
-                        ):
-                            provider = "anthropic"
-                    model = dict(model or {})
-                    model["provider"] = provider
-                    if not model.get("default"):
-                        model["default"] = (
-                            "anthropic/claude-sonnet-4"
-                            if provider == "anthropic"
-                            else "anthropic/claude-3.5-sonnet"
-                        )
-                    cfg["model"] = model
-                    save_config(cfg)
-            except Exception as exc:
-                logger.debug("aimarkets: model.provider seed failed: %s", exc)
+            if not connection:
+                return
+            provider = str(connection.get("provider") or "")
+            api_key = str(connection.get("apiKey") or "").strip()
+            base_url = str(connection.get("baseUrl") or "").strip()
+            model_id = str(connection.get("model") or "").strip()
+            if not api_key or not base_url:
+                return
+            env_name = AimarketsAuthProvider._BUYER_ENV.get(provider)
+            if env_name:
+                save_env_value(env_name, api_key)
+            if provider == "byok-custom":
+                save_env_value("OPENAI_BASE_URL", base_url)
+            hermes_provider = (
+                "anthropic" if provider == "anthropic" else "openrouter" if provider == "openrouter" else "custom"
+            )
+            cfg = load_config() or {}
+            model = cfg.get("model") if isinstance(cfg.get("model"), dict) else {}
+            model = dict(model or {})
+            model["provider"] = hermes_provider
+            model["base_url"] = base_url
+            model["api_key"] = api_key
+            if model_id:
+                model["default"] = model_id
+            cfg["model"] = model
+            save_config(cfg)
+            logger.info("dashboard-auth-aimarkets: wrote buyer BYOK provider %s into %s", provider, profile)
         finally:
             reset_hermes_home_override(token)
 
