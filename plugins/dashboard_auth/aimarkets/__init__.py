@@ -20,6 +20,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -254,30 +255,50 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         from pathlib import Path
 
         from hermes_cli import profiles as profiles_mod
-        from hermes_cli.config import load_config, remove_env_value, save_config, save_env_value
+        from hermes_cli.config import load_config, save_config
         from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 
-        root_home = Path(os.environ.get("HERMES_HOME") or str(get_hermes_home()))
-        root_vars = AimarketsAuthProvider._read_env_file(root_home / ".env")
-        user_id = profile[len("market-") :] if profile.startswith("market-") else ""
-        connection = AimarketsAuthProvider._fetch_buyer_connection(user_id)
+        import json
+        import tempfile
 
-        profile_dir = profiles_mod.get_profile_dir(profile)
-        existing = AimarketsAuthProvider._read_env_file(profile_dir / ".env")
+        user_id = profile[len("market-") :] if profile.startswith("market-") else ""
+        if not re.fullmatch(r"[a-f0-9]{24}", user_id):
+            raise ValueError("Invalid buyer profile")
+        connection = AimarketsAuthProvider._fetch_buyer_connection(user_id)
+        profile_dir = Path(profiles_mod.get_profile_dir(profile))
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        env_path = profile_dir / ".env"
+        existing = AimarketsAuthProvider._read_env_file(env_path)
+        # Never use save_env_value/remove_env_value: both mutate os.environ,
+        # which is shared by all buyer sessions in this dashboard process.
+        for name in AimarketsAuthProvider._PLATFORM_KEY_NAMES:
+            existing.pop(name, None)
+        if connection:
+            name = AimarketsAuthProvider._BUYER_ENV.get(str(connection.get("provider") or ""))
+            if name and connection.get("apiKey"):
+                existing[name] = str(connection["apiKey"])
+            if connection.get("provider") == "byok-custom":
+                existing["OPENAI_BASE_URL"] = str(connection.get("baseUrl") or "")
+        fd, tmp = tempfile.mkstemp(prefix=".byok-", dir=profile_dir)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                for name, value in existing.items():
+                    out.write(name + "=" + json.dumps(value, ensure_ascii=False) + "\n")
+                out.flush()
+                os.fsync(out.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, env_path)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
         token = set_hermes_home_override(str(profile_dir))
         try:
-            removed = 0
-            for name in AimarketsAuthProvider._PLATFORM_KEY_NAMES:
-                platform_val = (root_vars.get(name) or os.environ.get(name) or "").strip()
-                if platform_val and existing.get(name) == platform_val:
-                    if remove_env_value(name):
-                        removed += 1
-            if removed:
-                logger.info(
-                    "dashboard-auth-aimarkets: removed %d platform keys from %s",
-                    removed,
-                    profile,
-                )
+            cfg = load_config() or {}
+            model = dict(cfg.get("model") or {}) if isinstance(cfg.get("model"), dict) else {}
+            for name in ("api_key", "base_url"):
+                model.pop(name, None)
+            cfg["model"] = model
+            save_config(cfg)
             if not connection:
                 return
             provider = str(connection.get("provider") or "")
@@ -287,10 +308,6 @@ class AimarketsAuthProvider(DashboardAuthProvider):
             if not api_key or not base_url:
                 return
             env_name = AimarketsAuthProvider._BUYER_ENV.get(provider)
-            if env_name:
-                save_env_value(env_name, api_key)
-            if provider == "byok-custom":
-                save_env_value("OPENAI_BASE_URL", base_url)
             hermes_provider = (
                 "anthropic" if provider == "anthropic" else "openrouter" if provider == "openrouter" else "custom"
             )
