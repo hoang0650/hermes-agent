@@ -256,7 +256,7 @@ class AimarketsAuthProvider(DashboardAuthProvider):
 
         from hermes_cli import profiles as profiles_mod
         from hermes_cli.config import load_config, save_config
-        from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
         import json
         import tempfile
@@ -307,7 +307,6 @@ class AimarketsAuthProvider(DashboardAuthProvider):
             model_id = str(connection.get("model") or "").strip()
             if not api_key or not base_url:
                 return
-            env_name = AimarketsAuthProvider._BUYER_ENV.get(provider)
             hermes_provider = (
                 "anthropic" if provider == "anthropic" else "openrouter" if provider == "openrouter" else "custom"
             )
