@@ -44,6 +44,12 @@ _SIG_LEN = hashlib.sha256().digest_size
 LAST_SKIP_REASON: str = ""
 
 
+def _buyer_runtime_ready() -> bool:
+    # A profile/context variable is not a sandbox. Operators may enable this
+    # only after deploying independent buyer execution and scoped credentials.
+    return os.environ.get("HERMES_AIMARKETS_TENANT_ISOLATED", "").strip() == "1"
+
+
 def _sign(payload: dict, secret: bytes) -> str:
     raw = json.dumps(payload, separators=(",", ":")).encode()
     sig = hmac.new(secret, raw, hashlib.sha256).digest()
@@ -143,6 +149,8 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         raise NotImplementedError("AimarketsAuthProvider is password-only")
 
     def complete_password_login(self, *, username: str, password: str) -> Session:
+        if not _buyer_runtime_ready():
+            raise InvalidCredentialsError("Buyer runtime is temporarily unavailable pending tenant isolation")
         data = _verify_remote(username=username, password=password)
         user_id = str(data["userId"])
         profile = str(data["profile"])
@@ -366,6 +374,8 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         )
 
     def verify_session(self, *, access_token: str) -> Optional[Session]:
+        if not _buyer_runtime_ready():
+            return None
         payload = _unsign(access_token, self._secret)
         if (
             payload is None
@@ -385,6 +395,8 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         )
 
     def refresh_session(self, *, refresh_token: str) -> Session:
+        if not _buyer_runtime_ready():
+            raise RefreshExpiredError("Buyer runtime is unavailable pending tenant isolation")
         if not refresh_token:
             raise RefreshExpiredError("no refresh token")
         payload = _unsign(refresh_token, self._secret)

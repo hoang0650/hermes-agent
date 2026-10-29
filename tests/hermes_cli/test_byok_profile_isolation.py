@@ -65,3 +65,17 @@ def test_real_registered_tool_hook_blocks_execution(monkeypatch):
     action, message = plugins.get_pre_tool_call_directive('terminal', {'command': 'read another profile'})
     assert action == 'block'
     assert 'isolated buyer sandboxes' in message
+
+
+def test_shared_runtime_rejects_new_and_existing_buyer_sessions(monkeypatch):
+    import pytest
+    from hermes_cli.dashboard_auth import InvalidCredentialsError, RefreshExpiredError
+
+    monkeypatch.delenv('HERMES_AIMARKETS_TENANT_ISOLATED', raising=False)
+    provider = AimarketsAuthProvider(secret=b'fake-test-signing-secret-32-bytes!!')
+    old_session = provider._mint_session(user_id='a' * 24, username='test-buyer', profile='market-' + 'a' * 24)
+    assert provider.verify_session(access_token=old_session.access_token) is None
+    with pytest.raises(InvalidCredentialsError, match='tenant isolation'):
+        provider.complete_password_login(username='test-buyer', password='not-used')
+    with pytest.raises(RefreshExpiredError, match='tenant isolation'):
+        provider.refresh_session(refresh_token=old_session.refresh_token)
