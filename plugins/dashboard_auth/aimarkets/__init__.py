@@ -176,6 +176,7 @@ class AimarketsAuthProvider(DashboardAuthProvider):
                 profile,
                 exc,
             )
+            raise InvalidCredentialsError("Buyer credential profile is unavailable") from exc
 
     _PLATFORM_KEY_NAMES = (
         "OPENROUTER_API_KEY",
@@ -246,7 +247,9 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         except Exception as exc:
             logger.warning("dashboard-auth-aimarkets: byok resolve failed: %s", exc)
             return None
-        conn = data.get("connection") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or data.get("userId") != user_id:
+            raise InvalidCredentialsError("Buyer credential owner mismatch")
+        conn = data.get("connection")
         return conn if isinstance(conn, dict) else None
 
     @staticmethod
@@ -300,6 +303,15 @@ class AimarketsAuthProvider(DashboardAuthProvider):
             cfg["model"] = model
             save_config(cfg)
             if not connection:
+                # An empty api_key falls back to process-global platform keys.
+                # Keep the dashboard usable, but make inference fail closed.
+                cfg["model"] = {
+                    "provider": "custom",
+                    "api_key": "aimarkets-byok-required",
+                    "base_url": "https://byok-not-configured.invalid/v1",
+                    "default": "buyer-key-required",
+                }
+                save_config(cfg)
                 return
             provider = str(connection.get("provider") or "")
             api_key = str(connection.get("apiKey") or "").strip()
@@ -392,6 +404,15 @@ class AimarketsAuthProvider(DashboardAuthProvider):
         return None
 
 
+def _block_shared_runtime_tools(**_: Any) -> dict[str, str]:
+    # Profiles are not an OS boundary. A local shell/file tool could read
+    # another buyer's credentials or the controller's service secret.
+    return {
+        "action": "block",
+        "message": "Tool execution is unavailable until this shared runtime has isolated buyer sandboxes. Text chat remains available with your own API key.",
+    }
+
+
 def register(ctx: Any) -> None:
     global LAST_SKIP_REASON
     LAST_SKIP_REASON = ""
@@ -414,6 +435,7 @@ def register(ctx: Any) -> None:
 
     provider = AimarketsAuthProvider(secret=_resolve_secret(), ttl_seconds=ttl)
     ctx.register_dashboard_auth_provider(provider)
+    ctx.register_hook("pre_tool_call", _block_shared_runtime_tools)
     logger.info(
         "dashboard-auth-aimarkets: registered multi-buyer password provider "
         "(api=%s)",

@@ -36,6 +36,32 @@ def test_buyer_keys_use_real_profile_files_without_global_environment_mutation(t
     assert 'fake-buyer-' not in (profile_dir / '.env').read_text()
     token = set_hermes_home_override(profile_dir)
     try:
-        assert 'api_key' not in load_config()['model']
+        assert load_config()['model']['api_key'] == 'aimarkets-byok-required'
+        assert load_config()['model']['base_url'] == 'https://byok-not-configured.invalid/v1'
     finally:
         reset_hermes_home_override(token)
+
+
+def test_shared_runtime_tools_are_blocked():
+    from plugins.dashboard_auth.aimarkets import _block_shared_runtime_tools
+
+    for name in ('terminal', 'read_file', 'write_file', 'delegate_task', 'unknown_tool'):
+        result = _block_shared_runtime_tools(tool_name=name, args={})
+        assert result['action'] == 'block'
+        assert result['message']
+
+
+def test_real_registered_tool_hook_blocks_execution(monkeypatch):
+    from hermes_cli import plugins
+    from plugins.dashboard_auth.aimarkets import register
+
+    monkeypatch.setenv('HERMES_AIMARKETS_API_URL', 'https://api.aimarkets.vn')
+    monkeypatch.setenv('AIMARKETS_SERVICE_SECRET', 'fake-test-service-secret')
+    manager = plugins.PluginManager()
+    ctx = plugins.PluginContext(plugins.PluginManifest(name='byok-security-test'), manager)
+    monkeypatch.setattr(ctx, 'register_dashboard_auth_provider', lambda provider: None)
+    register(ctx)
+    monkeypatch.setattr(plugins, '_delivery_manager', lambda: manager)
+    action, message = plugins.get_pre_tool_call_directive('terminal', {'command': 'read another profile'})
+    assert action == 'block'
+    assert 'isolated buyer sandboxes' in message
