@@ -24,7 +24,8 @@ def test_buyer_keys_use_real_profile_files_without_global_environment_mutation(t
         text = (profile_dir / '.env').read_text()
         assert 'fake-buyer-' + uid in text
         assert 'fake-buyer-' + next(other for other in users if other != uid) not in text
-        assert (profile_dir / '.env').stat().st_mode & 0o777 == 0o600
+        if os.name != 'nt':
+            assert (profile_dir / '.env').stat().st_mode & 0o777 == 0o600
         token = set_hermes_home_override(profile_dir)
         try:
             assert load_config()['model']['api_key'] == 'fake-buyer-' + uid
